@@ -1,0 +1,23 @@
+#include "queue.h"
+
+typedef struct Threadpool{
+    Queue_handler queue;
+    int shutdown;
+    int serving_socket;
+    char root_dir[1000];
+    //char *root_dir;
+    clock_t begin;
+    int served_pages;
+    long bytes;
+    int serving_port;
+    pthread_mutex_t mtx;
+    pthread_cond_t cond;
+}Threadpool;
+
+
+Threadpool* threadpool_Init(int serving_port, char* root_dir);
+void threadpool_add(Threadpool* thrpool, int value);
+int threadpool_get(Threadpool* thrpool);
+void *thr_routine(void* arg);
+pthread_t* createThreads (int thr_no, Threadpool* thrpool);
+int close_threads (pthread_t* tids, int thr_no);

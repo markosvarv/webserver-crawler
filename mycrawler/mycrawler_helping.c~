@@ -1,0 +1,165 @@
+#include <stdio.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <string.h>
+#include <sys/wait.h>        /* sockets */
+#include <sys/types.h>       /* sockets */
+#include <sys/socket.h>      /* sockets */
+#include <netinet/in.h>      /* internet sockets */
+#include <netdb.h>           /* gethostbyaddr */
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <time.h>
+#include <errno.h>
+
+#include "mycrawler.h"
+#include "threadpool.h"
+
+int sendHTTP_GET (const char* host, const char* path, int socket){
+    char request[1000];
+    sprintf(request, "GET %s HTPP/1.1\nUser-Agent: Mozzila/4.0 (Compatible)\nHost: %s\nAccept-Language: en-us\nAccept-Encoding: gzip, feflate\nConnection: Keep-Alive\n\r\n", path, host);
+    //printf("request = %s\n", request);
+    if (write(socket, request, strlen(request)) < 0) perror_exit("write");
+    return 1;
+}
+
+int readLine (int fd, char* line) {
+    int i,error;
+    char current_char;
+
+    for (i=0; (error=read(fd, &current_char, 1))>0 && current_char!='\n'; i++){
+        *(line+i)=current_char;
+    }
+    if (error==-1) perror_exit ("read line from file descriptor");
+
+    *(line+i)='\0';
+    return i>1; //return 1 if line has characters or 0 if not
+}
+
+void perror_exit(char *message) {
+    perror(message);
+    exit(EXIT_FAILURE);
+}
+/*
+void *fillingThreapool (void* arg) {
+    Threadpool* thrpool = (Threadpool*)arg;
+
+
+    
+    int sock, newsock;
+    struct sockaddr_in server, client;
+    socklen_t clientlen = sizeof(client);
+
+    struct sockaddr *serverptr=(struct sockaddr *)&server;
+    struct sockaddr *clientptr=(struct sockaddr *)&client;
+    //struct hostent *rem;
+
+    //Create socket
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) perror_exit("socket");
+
+    thrpool->sending_socket = sock;
+
+    server.sin_family = AF_INET;       //Internet domain
+    server.sin_addr.s_addr = htonl(INADDR_ANY);
+    server.sin_port = htons(thrpool->sending_port);
+
+    //Bind socket to address
+    if (bind(sock, serverptr, sizeof(server)) < 0) perror_exit("bind");
+
+    //Listen for connections
+    if (listen(sock, 5) < 0) perror_exit("listen");
+    printf("Listening for connections to sending port %d\n", thrpool->sending_port);
+
+    while (!thrpool->shutdown) {
+        //accept connection
+        if ((newsock = accept(sock, clientptr, &clientlen)) < 0) perror_exit("accept");
+        //Find client's address
+        //if ((rem = gethostbyaddr((char *) &client.sin_addr.s_addr, sizeof(client.sin_addr.s_addr), client.sin_family)) == NULL) {
+        //herror("gethostbyaddr"); exit(1);}
+        //printf("Accepted connection from %s\n", rem->h_name);
+        printf("Accepted serving connection\n");
+
+        //add new socket's file descriptor in threadpool
+        threadpool_add(thrpool, "markos");
+    }
+    printf("About to exit serving socket function\n");
+    pthread_exit(NULL);
+}
+
+int createCommandSocket (int command_port, Threadpool* thrpool, int thr_no) {
+    int sock, newsock;
+    struct sockaddr_in server, client;
+    socklen_t clientlen = sizeof(client);
+
+    struct sockaddr *serverptr=(struct sockaddr *)&server;
+    struct sockaddr *clientptr=(struct sockaddr *)&client;
+    //struct hostent *rem;
+
+    //Create socket
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) perror_exit("socket");
+
+    server.sin_family = AF_INET;       //Internet domain
+    server.sin_addr.s_addr = htonl(INADDR_ANY);
+    server.sin_port = htons(command_port);
+
+    //Bind socket to address
+    if (bind(sock, serverptr, sizeof(server)) < 0) perror_exit("bind");
+
+    //Listen for connections
+    if (listen(sock, 5) < 0) perror_exit("listen");
+    printf("Listening for command connections to port %d\n", command_port);
+
+    //accept connection
+    if ((newsock = accept(sock, clientptr, &clientlen)) < 0) perror_exit("accept");
+    //Find client's address
+    //if ((rem = gethostbyaddr((char *) &client.sin_addr.s_addr, sizeof(client.sin_addr.s_addr), client.sin_family)) == NULL) {
+    //herror("gethostbyaddr"); exit(1);}
+    //printf("Accepted connection from %s\n", rem->h_name);
+    printf("Accepted command connection\n");
+    //char* line;
+    char* line=readLine(newsock);
+    if (!line) {fprintf(stderr, "Error while reading from command socket\n"); return 0;}
+    while (strcmp(line, "SHUTDOWN")!=0) {
+        //printf("strlen = %ld\n", strlen(line));
+        printf("line = %s\n", line);
+
+        if (!strcmp(line, "STATS")) {
+            char reply[100];
+            double seconds = (double)(clock()-thrpool->begin)/CLOCKS_PER_SEC;
+
+            //int h = seconds / 3600;
+            //int m = (seconds / 60) % 60;
+            //int s = seconds % 60;
+            sprintf(reply, "Server up for %f\n", seconds);
+            //write(newsock, reply, strlen(reply)+1);
+
+            //Reply
+            if (write(newsock, reply, strlen(reply)+1) < 0) perror_exit("write");
+        }
+
+        free (line);
+        line=readLine(newsock);
+        if (!line) {fprintf(stderr, "Error while reading from command socket\n"); return 0;}
+    }
+
+    thrpool->shutdown=1;
+    int shuterror = shutdown (thrpool->sending_socket, SHUT_RDWR);
+    if (shuterror) {
+        perror("shutdown serving socket");
+        exit(1);
+    }
+
+    for (int i=0; i<thr_no; i++) {
+        threadpool_add(thrpool, "markos");
+    }
+    
+    free(line);
+    printf("Closing command connection.\n");
+    close(newsock);   //Close socket
+
+    printf("About to exit command socket function\n");
+    return 1;
+}
+*/

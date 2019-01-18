@@ -1,0 +1,29 @@
+OBJS    = myhttpd.o myhttpd_helping.o queue.o
+SOURCE  = myhttpd.c myhttpd_helping.c queue.c
+HEADER  = myhttpd.h queue.h
+OUT     = myhttpd 
+CC      = gcc
+FLAGS   = -g -c -Wall -lpthread
+# -g option enables debugging mode 
+# -c flag generates object code for separate files
+
+all: $(OBJS)
+	$(CC) -g $(OBJS) -o $(OUT) -lpthread
+
+# create/compile the individual files >>separately<< 
+myhttpd.o: myhttpd.c
+	$(CC) $(FLAGS) myhttpd.c
+
+myhttpd_helping.o: myhttpd_helping.c
+	$(CC) $(FLAGS) myhttpd_helping.c
+
+queue.o: queue.c
+	$(CC) $(FLAGS) queue.c
+
+# clean house
+clean:
+	rm -f $(OBJS) $(OUT)
+
+# do a bit of accounting
+count:
+	wc $(SOURCE) $(HEADER)

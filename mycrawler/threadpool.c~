@@ -1,0 +1,133 @@
+#include <stdio.h>
+#include <unistd.h>
+#include <ctype.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <string.h>
+#include <sys/wait.h>        /* sockets */
+#include <sys/types.h>       /* sockets */
+#include <sys/socket.h>      /* sockets */
+#include <netinet/in.h>      /* internet sockets */
+#include <netdb.h>           /* gethostbyaddr */
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <time.h>
+#include <errno.h>
+
+#include "threadpool.h"
+
+typedef struct Threadpool{
+    Queue_handler queue;
+    int shutdown;
+    int serving_socket;
+    char root_dir[1000];
+    //char *root_dir;
+    clock_t begin;
+    int served_pages;
+    long bytes;
+    int serving_port;
+    pthread_mutex_t mtx;
+    pthread_cond_t cond;
+}Threadpool;
+
+Threadpool* threadpool_Init(int serving_port, char* root_dir) {
+    Threadpool *thrpool = malloc(sizeof(Threadpool));
+
+    thrpool->shutdown = 0;
+    thrpool->queue = Queue_create();
+    thrpool->begin = clock();
+    thrpool->serving_port = serving_port;
+    strcpy(thrpool->root_dir, root_dir);
+    //thrpool->root_dir = root_dir;
+    int errno;
+    if ((errno=pthread_mutex_init(&thrpool->mtx, NULL))) {
+        perror("mutex init");
+        return NULL;
+    }
+    if ((errno=pthread_cond_init(&thrpool->cond, NULL))) {
+        perror("cond init");
+        return NULL;
+    }
+    return thrpool;
+}
+
+
+void threadpool_add(Threadpool* thrpool, int value){
+    printf("about to add %d\n", value);
+
+    pthread_mutex_lock(&thrpool->mtx);
+
+    //Add element normally
+    Queue_insert (thrpool->queue, value);
+
+    pthread_mutex_unlock(&thrpool->mtx);
+
+    //Signal waiting threads
+    pthread_cond_signal(&thrpool->cond);
+}
+
+int threadpool_get(Threadpool* thrpool){
+    printf("MPHKA STHN GET\n");
+    int value;
+    pthread_mutex_lock(&thrpool->mtx);
+
+    //Wait for element to become available
+    while (Queue_isEmpty(thrpool->queue)) pthread_cond_wait(&thrpool->cond, &thrpool->mtx);
+    
+    //We have an element. Pop it normally and return it in val_r
+    value = Queue_removeData(thrpool->queue);
+
+    pthread_mutex_unlock(&thrpool->mtx);
+
+    return value;
+}
+
+void *thr_routine(void* arg) {
+    Threadpool* thrpool = (Threadpool*)arg;
+    do {
+        int newsock = queue_get(thrpool);
+        printf("got %d, %ld\n", newsock, pthread_self());
+        char* request = readHTTPrequest(newsock);
+        if (request) resolveRequest (request, thrpool->root_dir, newsock);
+        else printf("NULL REQUEST\n");
+        free (request);
+        close(newsock); //parent closes socket to client //must be closed before it gets re-assigned
+    }while(!thrpool->shutdown);
+    printf("thread is about to exit\n");
+
+    pthread_exit(NULL);
+}
+
+pthread_t* createThreads (int thr_no, Threadpool* thrpool){
+    pthread_t *tids;
+    int err;
+    if ((tids = malloc(thr_no * sizeof(pthread_t))) == NULL) {
+        perror("malloc");
+        return NULL;
+    }
+
+    for (int i=0; i<thr_no; i++) {
+        err = pthread_create(tids+i, NULL, thr_routine, (void*)thrpool);
+        if (err) {
+            perror2("pthread_create", err);
+            printf("mphka sto error\n");
+            return NULL;
+        }
+    }
+
+    return tids;
+}
+
+int close_threads (pthread_t* tids, int thr_no) {
+    int err;
+    for (int i=0; i<thr_no; i++) {
+        if ((err = pthread_join(*(tids+i), NULL))) {
+        //Wait for thread termination
+            perror2("pthread_join", err);
+            exit(1);
+        }
+    }
+    printf("all %d threads have terminated\n", thr_no);
+    free (tids);
+    return 1;
+}
